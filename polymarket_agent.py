@@ -35,7 +35,7 @@ LOOKBACK_HOURS = 24  # How many hours back to fetch historical trades on startup
 IGNORE_CRYPTO_KEYWORDS = [
     'bitcoin', 'btc', 'ethereum', 'eth', 'crypto', 'solana', 'sol',
     'dogecoin', 'doge', 'shiba', 'cardano', 'ada', 'ripple', 'xrp',
-    
+
 ]
 
 IGNORE_SPORTS_KEYWORDS = [
@@ -47,7 +47,7 @@ IGNORE_SPORTS_KEYWORDS = [
     'yankees', 'dodgers', 'red sox', 'mets',
     'premier league', 'la liga', 'champions league',
     'tennis', 'golf', 'nascar', 'formula 1', 'f1',
-    'cricket', 
+    'cricket',
 ]
 
 # Agent behavior - REAL-TIME WebSocket + Analysis
@@ -133,10 +133,40 @@ WEBSOCKET_URL = "wss://ws-live-data.polymarket.com"
 # ==============================================================================
 
 class PolymarketAgent:
-    """Agent that tracks Polymarket markets and provides AI predictions"""
+    """Scans Polymarket trades, saves markets to CSV, and uses AI to make predictions.
+
+    This agent connects to the Polymarket WebSocket API to receive real-time trade
+    data. It filters trades based on size and other criteria, saves market data to a
+    CSV file, and uses an AI model (or a swarm of models) to generate predictions
+    on market outcomes.
+
+    Attributes:
+        csv_lock (threading.Lock): A lock to ensure thread-safe access to CSV files.
+        last_analyzed_count (int): The number of markets that have been analyzed.
+        last_analysis_run_timestamp (str): The timestamp of the last analysis run.
+        ws (websocket.WebSocketApp): The WebSocket connection to Polymarket.
+        ws_connected (bool): Whether the WebSocket is currently connected.
+        total_trades_received (int): The total number of trades received from the
+            WebSocket.
+        filtered_trades_count (int): The number of trades that have passed the
+            filtering criteria.
+        ignored_crypto_count (int): The number of trades that have been ignored
+            because they were related to cryptocurrency.
+        ignored_sports_count (int): The number of trades that have been ignored
+            because they were related to sports.
+        swarm (SwarmAgent): The swarm agent used to generate predictions from
+            multiple AI models.
+        model (ModelFactory): The AI model used to generate predictions.
+        markets_df (pd.DataFrame): A DataFrame containing market data.
+        predictions_df (pd.DataFrame): A DataFrame containing prediction data.
+    """
 
     def __init__(self):
-        """Initialize the Polymarket agent"""
+        """Initializes the PolymarketAgent.
+
+        This method sets up the agent by creating the data folder, initializing the CSV
+        lock, and loading the AI models.
+        """
         cprint("\n" + "="*80, "cyan")
         cprint("🌙 Polymarket Prediction Market Agent - Initializing", "cyan", attrs=['bold'])
         cprint("="*80, "cyan")
@@ -193,7 +223,15 @@ class PolymarketAgent:
         cprint("✨ Initialization complete!\n", "green")
 
     def _load_markets(self):
-        """Load existing markets from CSV or create empty DataFrame"""
+        """Loads existing markets from a CSV file or creates an empty DataFrame.
+
+        This method attempts to load the markets from the `MARKETS_CSV` file. If the file
+        does not exist or an error occurs, it creates a new DataFrame with the
+        appropriate columns.
+
+        Returns:
+            pd.DataFrame: A DataFrame containing market data.
+        """
         if os.path.exists(MARKETS_CSV):
             try:
                 df = pd.read_csv(MARKETS_CSV)
@@ -210,7 +248,15 @@ class PolymarketAgent:
         ])
 
     def _load_predictions(self):
-        """Load existing predictions from CSV or create empty DataFrame"""
+        """Loads existing predictions from a CSV file or creates an empty DataFrame.
+
+        This method attempts to load the predictions from the `PREDICTIONS_CSV` file.
+        If the file does not exist or an error occurs, it creates a new DataFrame with
+        the appropriate columns.
+
+        Returns:
+            pd.DataFrame: A DataFrame containing prediction data.
+        """
         if os.path.exists(PREDICTIONS_CSV):
             try:
                 df = pd.read_csv(PREDICTIONS_CSV)
@@ -231,7 +277,11 @@ class PolymarketAgent:
         ])
 
     def _save_markets(self):
-        """Save markets DataFrame to CSV (thread-safe, silent)"""
+        """Saves the markets DataFrame to a CSV file.
+
+        This method saves the `markets_df` DataFrame to the `MARKETS_CSV` file in a
+        thread-safe manner.
+        """
         try:
             with self.csv_lock:
                 self.markets_df.to_csv(MARKETS_CSV, index=False)
@@ -239,7 +289,11 @@ class PolymarketAgent:
             cprint(f"❌ Error saving CSV: {e}", "red")
 
     def _save_predictions(self):
-        """Save predictions DataFrame to CSV (thread-safe)"""
+        """Saves the predictions DataFrame to a CSV file.
+
+        This method saves the `predictions_df` DataFrame to the `PREDICTIONS_CSV` file
+        in a thread-safe manner.
+        """
         try:
             with self.csv_lock:
                 self.predictions_df.to_csv(PREDICTIONS_CSV, index=False)
@@ -248,15 +302,26 @@ class PolymarketAgent:
             cprint(f"❌ Error saving predictions CSV: {e}", "red")
 
     def is_near_resolution(self, price):
-        """Check if price is within threshold of $0 or $1 (near resolution)"""
+        """Checks if a price is near the resolution price of $0 or $1.
+
+        Args:
+            price (float): The price to check.
+
+        Returns:
+            bool: True if the price is near the resolution price, False otherwise.
+        """
         price_float = float(price)
         return price_float <= IGNORE_PRICE_THRESHOLD or price_float >= (1.0 - IGNORE_PRICE_THRESHOLD)
 
     def should_ignore_market(self, title):
-        """🌙 Moon Dev - Check if market should be ignored based on category keywords
+        """Checks if a market should be ignored based on its title.
+
+        Args:
+            title (str): The title of the market.
 
         Returns:
-            tuple: (should_ignore: bool, reason: str or None)
+            tuple: A tuple containing a boolean indicating whether the market should
+                be ignored and a string explaining the reason.
         """
         title_lower = title.lower()
 
@@ -273,7 +338,15 @@ class PolymarketAgent:
         return (False, None)
 
     def on_ws_message(self, ws, message):
-        """🌙 Moon Dev - Handle incoming WebSocket messages"""
+        """Handles incoming WebSocket messages.
+
+        This method is called when a message is received from the Polymarket WebSocket.
+        It parses the message, filters out irrelevant data, and processes trade data.
+
+        Args:
+            ws (websocket.WebSocketApp): The WebSocket connection.
+            message (str): The message received from the WebSocket.
+        """
         try:
             data = json.loads(message)
 
@@ -344,11 +417,27 @@ class PolymarketAgent:
             cprint(f"⚠️ Moon Dev - Error processing WebSocket message: {e}", "yellow")
 
     def on_ws_error(self, ws, error):
-        """🌙 Moon Dev - Handle WebSocket errors"""
+        """Handles WebSocket errors.
+
+        This method is called when an error occurs with the WebSocket connection.
+
+        Args:
+            ws (websocket.WebSocketApp): The WebSocket connection.
+            error (Exception): The error that occurred.
+        """
         cprint(f"❌ Moon Dev WebSocket Error: {error}", "red")
 
     def on_ws_close(self, ws, close_status_code, close_msg):
-        """🌙 Moon Dev - Handle WebSocket close"""
+        """Handles WebSocket connection closure.
+
+        This method is called when the WebSocket connection is closed. It attempts to
+        reconnect after a short delay.
+
+        Args:
+            ws (websocket.WebSocketApp): The WebSocket connection.
+            close_status_code (int): The status code of the closure.
+            close_msg (str): The closure message.
+        """
         self.ws_connected = False
         cprint(f"\n🔌 Moon Dev WebSocket connection closed: {close_status_code} - {close_msg}", "yellow")
         cprint("Reconnecting in 5 seconds...", "cyan")
@@ -356,7 +445,14 @@ class PolymarketAgent:
         self.connect_websocket()
 
     def on_ws_open(self, ws):
-        """🌙 Moon Dev - Handle WebSocket open - send subscription"""
+        """Handles WebSocket connection opening.
+
+        This method is called when the WebSocket connection is opened. It subscribes to
+        the trade feed.
+
+        Args:
+            ws (websocket.WebSocketApp): The WebSocket connection.
+        """
         cprint("🔌 Moon Dev WebSocket connected!", "green")
 
         # Subscribe to all trades on the activity topic
@@ -390,7 +486,7 @@ class PolymarketAgent:
         ping_thread.start()
 
     def connect_websocket(self):
-        """🌙 Moon Dev - Connect to Polymarket WebSocket"""
+        """Connects to the Polymarket WebSocket."""
         cprint(f"🚀 Moon Dev connecting to {WEBSOCKET_URL}...", "cyan")
 
         self.ws = websocket.WebSocketApp(
@@ -408,13 +504,17 @@ class PolymarketAgent:
         cprint("✅ Moon Dev WebSocket thread started!", "green")
 
     def fetch_historical_trades(self, hours_back=None):
-        """🌙 Moon Dev - Fetch historical trades from Polymarket API on startup
+        """Fetches historical trades from the Polymarket API.
+
+        This method fetches historical trade data from the Polymarket API for the past
+        `LOOKBACK_HOURS`.
 
         Args:
-            hours_back: How many hours back to fetch (defaults to LOOKBACK_HOURS)
+            hours_back (int, optional): The number of hours to look back for
+                historical trades. Defaults to `LOOKBACK_HOURS`.
 
         Returns:
-            List of trade dictionaries
+            list: A list of trade data dictionaries.
         """
         if hours_back is None:
             hours_back = LOOKBACK_HOURS
@@ -466,10 +566,13 @@ class PolymarketAgent:
             return []
 
     def process_trades(self, trades):
-        """Process trades and add new markets to DataFrame
+        """Processes a list of trades and adds new markets to the DataFrame.
+
+        This method takes a list of trade data dictionaries, extracts unique markets,
+        and adds them to the `markets_df` DataFrame.
 
         Args:
-            trades: List of trade dictionaries from API
+            trades (list): A list of trade data dictionaries.
         """
         if not trades:
             return
@@ -544,7 +647,7 @@ class PolymarketAgent:
                 cprint(f"🔄 Updated {updated_markets} existing markets with fresh trade data", "cyan")
 
     def display_recent_markets(self):
-        """Display the most recent markets from CSV"""
+        """Displays the most recent markets."""
         if len(self.markets_df) == 0:
             cprint("\n📊 No markets in database yet", "yellow")
             return
@@ -570,7 +673,7 @@ class PolymarketAgent:
         cprint("="*80 + "\n", "cyan")
 
     def get_ai_predictions(self):
-        """Get AI predictions for recent markets"""
+        """Gets AI predictions for the most recent markets."""
         if len(self.markets_df) == 0:
             cprint("\n⚠️ No markets to analyze yet", "yellow")
             return
@@ -738,11 +841,11 @@ Provide predictions for each market in the specified format."""
                 cprint(f"❌ Error getting prediction: {e}", "red")
 
     def _mark_markets_analyzed(self, markets, analysis_timestamp):
-        """🌙 Moon Dev - Mark markets as analyzed with timestamp
+        """Marks markets as analyzed.
 
         Args:
-            markets: DataFrame of markets that were just analyzed
-            analysis_timestamp: ISO timestamp of when analysis completed
+            markets (pd.DataFrame): The DataFrame of markets to mark as analyzed.
+            analysis_timestamp (str): The timestamp of the analysis.
         """
         try:
             cprint("\n🕒 Marking markets as analyzed...", "cyan")
@@ -767,13 +870,13 @@ Provide predictions for each market in the specified format."""
             traceback.print_exc()
 
     def _save_swarm_predictions(self, analysis_run_id, analysis_timestamp, markets, swarm_result):
-        """🌙 Moon Dev - Save swarm predictions to CSV database (one row per market)
+        """Saves the predictions from the swarm agent to a CSV file.
 
         Args:
-            analysis_run_id: Unique ID for this analysis run
-            analysis_timestamp: ISO timestamp of analysis
-            markets: DataFrame of markets analyzed
-            swarm_result: Dictionary containing swarm responses
+            analysis_run_id (str): The ID of the analysis run.
+            analysis_timestamp (str): The timestamp of the analysis.
+            markets (pd.DataFrame): The DataFrame of markets that were analyzed.
+            swarm_result (dict): The result from the swarm agent.
         """
         try:
             cprint("\n💾 Saving predictions to database...", "cyan")
@@ -878,15 +981,14 @@ Provide predictions for each market in the specified format."""
             traceback.print_exc()
 
     def _calculate_polymarket_consensus(self, swarm_result, markets_df):
-        """
-        🌙 Moon Dev - Calculate consensus from individual swarm responses for Polymarket predictions
+        """Calculates the consensus prediction from the swarm agent's responses.
 
         Args:
-            swarm_result: Result dict from swarm.query() containing individual responses
-            markets_df: DataFrame of markets being analyzed (to map numbers to titles)
+            swarm_result (dict): The result from the swarm agent.
+            markets_df (pd.DataFrame): The DataFrame of markets that were analyzed.
 
         Returns:
-            str: Formatted consensus text with vote breakdown and analysis
+            str: A string containing the consensus prediction.
         """
         try:
             # Count votes for each prediction across all markets
@@ -1008,12 +1110,11 @@ Provide predictions for each market in the specified format."""
             return f"Error calculating consensus: {str(e)}"
 
     def _get_top_consensus_picks(self, swarm_result, markets_df):
-        """
-        🌙 Moon Dev - Use consensus AI to identify top 3 markets with strongest agreement
+        """Gets the top consensus picks from the swarm agent's responses.
 
         Args:
-            swarm_result: Result dict from swarm.query() containing all AI responses
-            markets_df: DataFrame of markets being analyzed
+            swarm_result (dict): The result from the swarm agent.
+            markets_df (pd.DataFrame): The DataFrame of markets that were analyzed.
         """
         try:
             cprint("\n" + "="*80, "yellow")
@@ -1075,15 +1176,11 @@ Provide predictions for each market in the specified format."""
             traceback.print_exc()
 
     def _save_consensus_picks_to_csv(self, consensus_response, markets_df):
-        """
-        🌙 Moon Dev - Save top consensus picks to dedicated CSV (append-only)
-
-        This CSV only contains the TOP consensus picks from each analysis run.
-        Perfect for reviewing what the AI swarm agreed on throughout the day!
+        """Saves the top consensus picks to a CSV file.
 
         Args:
-            consensus_response: The consensus AI's response text
-            markets_df: DataFrame of markets being analyzed
+            consensus_response (str): The consensus response from the AI model.
+            markets_df (pd.DataFrame): The DataFrame of markets that were analyzed.
         """
         try:
             import re
@@ -1198,7 +1295,7 @@ Provide predictions for each market in the specified format."""
             traceback.print_exc()
 
     def status_display_loop(self):
-        """🌙 Moon Dev - Display status updates every 30 seconds"""
+        """Displays the status of the agent every 30 seconds."""
         cprint("\n📊 STATUS DISPLAY THREAD STARTED", "cyan", attrs=['bold'])
         cprint(f"📡 Showing stats every 30 seconds\n", "cyan")
 
@@ -1271,7 +1368,7 @@ Provide predictions for each market in the specified format."""
                 cprint(f"❌ Error in status display loop: {e}", "red")
 
     def analysis_cycle(self):
-        """Check if we have enough eligible markets and run AI analysis"""
+        """Checks for new markets to analyze and runs the analysis if necessary."""
         cprint("\n" + "="*80, "magenta")
         cprint("🤖 ANALYSIS CYCLE CHECK", "magenta", attrs=['bold'])
         cprint(f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", "magenta")
@@ -1384,7 +1481,7 @@ Provide predictions for each market in the specified format."""
 
 
     def analysis_loop(self):
-        """🌙 Moon Dev - Continuously check for new markets to analyze (runs immediately!)"""
+        """Continuously checks for new markets to analyze."""
         cprint("\n🤖 ANALYSIS THREAD STARTED", "magenta", attrs=['bold'])
         cprint(f"🧠 Running first analysis NOW, then checking every {ANALYSIS_CHECK_INTERVAL_SECONDS} seconds\n", "magenta")
 
@@ -1410,7 +1507,7 @@ Provide predictions for each market in the specified format."""
 
 
 def main():
-    """🌙 Moon Dev Main - WebSocket real-time data + AI analysis threads"""
+    """The main entry point for the agent."""
     cprint("\n" + "="*80, "cyan")
     cprint("🌙 Moon Dev's Polymarket Agent - WebSocket Edition!", "cyan", attrs=['bold'])
     cprint("="*80, "cyan")

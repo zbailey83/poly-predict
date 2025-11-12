@@ -1,5 +1,8 @@
-"""
-Parent class for all trading agents with unified exchange support
+"""A base class for creating trading agents with unified exchange support.
+
+This class provides a common structure for agents that interact with
+cryptocurrency exchanges. It includes a basic initialization method, a way to
+get active tokens, and a placeholder for the main agent logic.
 """
 
 import os
@@ -10,13 +13,20 @@ import pandas as pd
 from termcolor import cprint
 
 class BaseAgent:
+    """A base class for creating trading agents with unified exchange support.
+
+    This class provides a common structure for agents that interact with
+    cryptocurrency exchanges. It includes a basic initialization method, a way to
+    get active tokens, and a placeholder for the main agent logic.
+    """
     def __init__(self, agent_type, use_exchange_manager=False):
-        """
-        Initialize base agent with type and optional exchange manager
+        """Initializes the BaseAgent.
 
         Args:
-            agent_type: Type of agent (e.g., 'trading', 'risk', 'strategy')
-            use_exchange_manager: If True, initialize ExchangeManager for unified trading
+            agent_type (str): The type of agent being created (e.g., 'trading',
+                'risk', 'strategy').
+            use_exchange_manager (bool, optional): Whether to initialize the
+                ExchangeManager for unified trading. Defaults to False.
         """
         self.type = agent_type
         self.start_time = datetime.now()
@@ -44,7 +54,15 @@ class BaseAgent:
                 self.exchange = 'solana'  # Default fallback
 
     def get_active_tokens(self):
-        """Get the appropriate token/symbol list based on active exchange"""
+        """Gets the list of active tokens based on the current exchange.
+
+        This method attempts to dynamically import and use the `get_active_tokens`
+        function from the configuration. If that fails, it falls back to a static
+        list of monitored tokens.
+
+        Returns:
+            list: A list of token symbols.
+        """
         try:
             from src.config import get_active_tokens
             return get_active_tokens()
@@ -53,5 +71,12 @@ class BaseAgent:
             return MONITORED_TOKENS
 
     def run(self):
-        """Default run method - should be overridden by child classes"""
-        raise NotImplementedError("Each agent must implement its own run method") 
+        """The main entry point for the agent's logic.
+
+        This method should be implemented by subclasses to define the agent's
+        primary behavior.
+
+        Raises:
+            NotImplementedError: If the method is not overridden by a subclass.
+        """
+        raise NotImplementedError("Each agent must implement its own run method")
