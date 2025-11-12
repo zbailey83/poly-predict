@@ -1,33 +1,23 @@
-"""
-Queries multiple AI models in parallel and returns:
-- Clean individual responses from each model
-- AI-generated consensus summary (Claude 4.5 synthesizes all responses)
+"""Queries multiple AI models in parallel and returns their responses.
 
-Perfect for getting diverse AI perspectives on trading decisions,
-validating strategies, or any decision that benefits from multiple viewpoints.
+This script provides a `SwarmAgent` class that can be used to query multiple
+AI models simultaneously. It is designed to get diverse perspectives on a given
+prompt and can be used for tasks such as trading decisions, strategy
+validation, and risk assessment.
 
 Usage:
-    # Run directly (asks for prompt interactively)
-    python src/agents/swarm_agent.py
+    To run the script directly and enter a prompt interactively:
+    $ python src/agents/swarm_agent.py
 
-    # Import and use in other agents
+    To use the `SwarmAgent` in another module:
     from src.agents.swarm_agent import SwarmAgent
 
     swarm = SwarmAgent()
     result = swarm.query("Should I buy Bitcoin now?")
-
-    # Access consensus summary
-    print(result["consensus_summary"])  # 3-sentence synthesis by Claude 4.5
-
-    # Access individual responses
+    print(result["consensus_summary"])
     for provider, data in result["responses"].items():
         if data["success"]:
             print(f"{provider}: {data['response']}")
-
-    # Check model mapping (AI #1 = CLAUDE, AI #2 = OPENAI, etc.)
-    print(result["model_mapping"])
-
-END Notes
 """
 
 import os
@@ -112,14 +102,29 @@ RESULTS_DIR = Path(project_root) / "src" / "data" / "swarm_agent"
 # ============================================
 
 class SwarmAgent:
-    """Moon Dev's Swarm Agent for multi-model consensus"""
+    """A class for querying multiple AI models in parallel.
+
+    The SwarmAgent initializes a set of AI models and provides a method to query
+    them all at once with a given prompt. It uses a `ThreadPoolExecutor` to run
+    the queries concurrently and collects the responses. It also includes a
+    feature to generate a consensus summary of the responses from a separate AI
+    model.
+
+    Attributes:
+        models_config (dict): A dictionary containing the configuration for the
+            AI models to be used in the swarm.
+        active_models (dict): A dictionary of the active AI models.
+        results_dir (pathlib.Path): The directory where the results of the swarm
+            queries are saved.
+    """
 
     def __init__(self, custom_models: Optional[Dict] = None):
-        """
-        Initialize the Swarm Agent
+        """Initializes the SwarmAgent.
 
         Args:
-            custom_models: Optional dict to override SWARM_MODELS configuration
+            custom_models (dict, optional): A dictionary of custom model
+                configurations to override the default `SWARM_MODELS`. Defaults
+                to None.
         """
         self.models_config = custom_models or SWARM_MODELS
         self.active_models = {}
@@ -140,7 +145,7 @@ class SwarmAgent:
             cprint(f"   ✅ {name}", "green")
 
     def _initialize_models(self):
-        """Initialize all enabled models"""
+        """Initializes the AI models that are enabled in the configuration."""
         for provider, (enabled, model_type, model_name) in self.models_config.items():
             if not enabled:
                 continue
@@ -162,11 +167,18 @@ class SwarmAgent:
 
     def _query_single_model(self, provider: str, model_info: Dict, prompt: str,
                           system_prompt: Optional[str] = None) -> Tuple[str, Dict]:
-        """
-        Query a single model
+        """Queries a single AI model.
+
+        Args:
+            provider (str): The name of the AI model provider.
+            model_info (dict): A dictionary containing the model's information.
+            prompt (str): The prompt to send to the model.
+            system_prompt (str, optional): The system prompt to send to the
+                model. Defaults to None.
 
         Returns:
-            Tuple of (provider_name, response_dict)
+            tuple: A tuple containing the provider name and a dictionary with the
+                model's response.
         """
         start_time = time.time()
 
@@ -208,15 +220,16 @@ class SwarmAgent:
             }
 
     def query(self, prompt: str, system_prompt: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Query all models in the swarm in parallel
+        """Queries all active AI models in the swarm in parallel.
 
         Args:
-            prompt: The prompt to send to all models
-            system_prompt: Optional system prompt (uses default if None)
+            prompt (str): The prompt to send to the models.
+            system_prompt (str, optional): The system prompt to send to the
+                models. Defaults to None.
 
         Returns:
-            Dict containing individual responses and metadata
+            dict: A dictionary containing the responses from all the models, as
+                well as metadata about the query.
         """
         cprint(f"\n🌊 Initiating Swarm Query with {len(self.active_models)} models...", "cyan", attrs=['bold'])
         cprint(f"📝 Prompt: {prompt[:100]}{'...' if len(prompt) > 100 else ''}", "blue")
@@ -359,7 +372,14 @@ class SwarmAgent:
         return result
 
     def _strip_think_tags(self, text: str) -> str:
-        """Remove <think>...</think> tags from response text"""
+        """Removes <think>...</think> tags from a string.
+
+        Args:
+            text (str): The string to remove the tags from.
+
+        Returns:
+            str: The string with the tags removed.
+        """
         # Remove <think>...</think> blocks (multiline)
         text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
         # Clean up extra whitespace
@@ -367,17 +387,15 @@ class SwarmAgent:
         return text.strip()
 
     def _generate_consensus_review(self, responses: Dict[str, Dict], original_prompt: str) -> Tuple[str, Dict]:
-        """
-        Generate a consensus review summary using the consensus reviewer AI
+        """Generates a consensus review of the AI models' responses.
 
         Args:
-            responses: All responses from the swarm
-            original_prompt: The original user prompt
+            responses (dict): A dictionary of the models' responses.
+            original_prompt (str): The original prompt that was sent to the models.
 
         Returns:
-            Tuple of (consensus_summary, model_mapping)
-            - consensus_summary: Clean 3-sentence consensus summary
-            - model_mapping: Dict mapping AI numbers to provider names
+            tuple: A tuple containing the consensus summary and a dictionary
+                mapping the AI numbers to the provider names.
         """
         try:
             # Get successful responses only
@@ -450,7 +468,11 @@ class SwarmAgent:
             return f"Error generating consensus summary: {str(e)}", {}
 
     def _save_results(self, result: Dict):
-        """Save results to JSON file"""
+        """Saves the results of a swarm query to a JSON file.
+
+        Args:
+            result (dict): The results of the swarm query.
+        """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = self.results_dir / f"swarm_result_{timestamp}.json"
 
@@ -460,7 +482,11 @@ class SwarmAgent:
         cprint(f"\n💾 Results saved to: {filename.relative_to(Path(project_root))}", "blue")
 
     def _print_summary(self, result: Dict):
-        """Print a summary of the swarm results"""
+        """Prints a summary of the swarm query results.
+
+        Args:
+            result (dict): The results of the swarm query.
+        """
         metadata = result["metadata"]
 
         cprint("\n" + "="*60, "green")
@@ -483,11 +509,15 @@ class SwarmAgent:
         cprint(f"   Success Rate: {metadata['successful_responses']}/{metadata['total_models']}", "white")
 
     def query_dataframe(self, prompt: str, system_prompt: Optional[str] = None) -> pd.DataFrame:
-        """
-        Query swarm and return results as a DataFrame
+        """Queries the swarm and returns the results as a pandas DataFrame.
+
+        Args:
+            prompt (str): The prompt to send to the models.
+            system_prompt (str, optional): The system prompt to send to the
+                models. Defaults to None.
 
         Returns:
-            DataFrame with columns: provider, response, success, error, response_time
+            pd.DataFrame: A DataFrame containing the results of the swarm query.
         """
         result = self.query(prompt, system_prompt)
 
@@ -506,7 +536,7 @@ class SwarmAgent:
 
 
 def main():
-    """Simple interactive swarm query"""
+    """A simple interactive swarm query session."""
     cprint("\n" + "="*60, "cyan")
     cprint("🌙 Moon Dev's Swarm Agent 🌙", "cyan", attrs=['bold'])
     cprint("="*60, "cyan")
